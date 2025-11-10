@@ -52,3 +52,6 @@ Data Access:
 ![alt text](scheme3.png)
 ## UseCase
 ![alt text](UseCase-1.png)
+
+## ER-диаграмма
+![alt text](er-diagram-1.png)
