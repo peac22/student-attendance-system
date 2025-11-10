@@ -50,3 +50,5 @@ Data Access:
 ![alt text](scheme1.png)
 ![alt text](scheme2.png)
 ![alt text](scheme3.png)
+## UseCase
+![alt text](UseCase-1.png)
