@@ -47,11 +47,11 @@ Data Access:
 
 
 ## Блок схемы
-![alt text](scheme1.png)
-![alt text](scheme2.png)
-![alt text](scheme3.png)
+![alt text](Docs/diagrams/scheme1.png)
+![alt text](Docs/diagrams/scheme2.png)
+![alt text](Docs/diagrams/scheme3.png)
 ## UseCase
-![alt text](UseCase-1.png)
+![alt text](Docs/diagrams/usecase.png)
 
 ## ER-диаграмма
-![alt text](er-diagram-1.png)
+![alt text](Docs/diagrams/newer.png)
