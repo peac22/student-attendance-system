@@ -1,0 +1,5 @@
+attendance_id,student,group,date,time,subject,status
+1,student1,ИКБО-25-22,2025-11-20,10:00,Математика,present
+2,student2,ИКБО-25-22,2025-11-20,10:00,Математика,absent
+3,student1,ИКБО-25-22,2025-11-21,12:00,Информатика,present
+4,student2,ИКБО-25-22,2025-11-21,12:00,Информатика,present

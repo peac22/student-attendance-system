@@ -1,0 +1,38 @@
+[
+  {
+    "attendance_id": 1,
+    "student": "student1",
+    "group": "ИКБО-25-22",
+    "date": "2025-11-20",
+    "time": "10:00",
+    "subject": "Математика",
+    "status": "present"
+  },
+  {
+    "attendance_id": 2,
+    "student": "student2",
+    "group": "ИКБО-25-22",
+    "date": "2025-11-20",
+    "time": "10:00",
+    "subject": "Математика",
+    "status": "absent"
+  },
+  {
+    "attendance_id": 3,
+    "student": "student1",
+    "group": "ИКБО-25-22",
+    "date": "2025-11-21",
+    "time": "12:00",
+    "subject": "Информатика",
+    "status": "present"
+  },
+  {
+    "attendance_id": 4,
+    "student": "student2",
+    "group": "ИКБО-25-22",
+    "date": "2025-11-21",
+    "time": "12:00",
+    "subject": "Информатика",
+    "status": "present"
+  }
+]
