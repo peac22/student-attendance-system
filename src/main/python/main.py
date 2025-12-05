@@ -121,10 +121,10 @@ def main():
     """, schedule_rows)
 
     attendance_rows = [
-        (1, 3, "present"),
-        (1, 4, "absent"),
-        (2, 3, "present"),
-        (2, 4, "present")
+        (1, 3, "присутствует"),
+        (1, 4, "отсутствует"),
+        (2, 3, "присутствует"),
+        (2, 4, "присутствует")
     ]
     cursor.executemany("""
         INSERT INTO ATTENDANCE (schedule_id, user_id, status)

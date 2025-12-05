@@ -382,44 +382,64 @@ def teacher_all_attendance(parent):
 # Attendance marking (teacher/admin)
 # -------------------------
 def open_attendance_mark_window(parent, schedule_id):
-    win = tk.Toplevel(parent); win.title(f"Отметка посещаемости — занятие #{schedule_id}"); win.geometry("700x520")
+    win = tk.Toplevel(parent)
+    win.title(f"Отметка посещаемости — занятие #{schedule_id}")
+    win.geometry("800x600")
     tk.Label(win, text=f"Занятие #{schedule_id}", font=("Segoe UI", 14, "bold")).pack(pady=10)
-    cols = ("student","status")
-    tree = ttk.Treeview(win, columns=cols, show="headings"); tree.heading("student", text="Студент"); tree.heading("status", text="Статус")
-    tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # Canvas for scrolling if many students
+    canvas = tk.Canvas(win)
+    scrollbar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
+    scrollable_frame = ttk.Frame(canvas)
+
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")
+        )
+    )
+
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    # Fetch students and their current status
     rows = db_query("""
-        SELECT u.user_id, u.username
+        SELECT u.user_id, u.username, a.status
         FROM GROUP_STUDENTS gs
         JOIN USERS u ON gs.user_id = u.user_id
         JOIN SCHEDULE s ON s.group_id = gs.group_id
+        LEFT JOIN ATTENDANCE a ON a.schedule_id = s.schedule_id AND a.user_id = u.user_id
         WHERE s.schedule_id = ?
+        ORDER BY u.username
     """, (schedule_id,))
-    for student_id, username in rows:
-        existing = db_query("SELECT status FROM ATTENDANCE WHERE schedule_id=? AND user_id=?", (schedule_id, student_id))
-        status = existing[0][0] if existing else "—"
-        tree.insert("", "end", values=(username, status), tags=(student_id,))
-    def mark_present():
-        sel = tree.focus()
-        if not sel: return
-        sid = tree.item(sel, "tags")[0]
-        upsert_attendance(schedule_id, sid, "present")
-        tree.set(sel, "status", "present")
-    def mark_absent():
-        sel = tree.focus()
-        if not sel: return
-        sid = tree.item(sel, "tags")[0]
-        upsert_attendance(schedule_id, sid, "absent")
-        tree.set(sel, "status", "absent")
-    def mark_late():
-        sel = tree.focus()
-        if not sel: return
-        sid = tree.item(sel, "tags")[0]
-        upsert_attendance(schedule_id, sid, "late")
-        tree.set(sel, "status", "late")
-    frm = tk.Frame(win); frm.pack(pady=8)
-    tk.Button(frm, text="Присутствует", width=14, command=mark_present).grid(row=0,column=0,padx=6)
-    tk.Button(frm, text="Отсутствует", width=14, command=mark_absent).grid(row=0,column=1,padx=6)
-    tk.Button(frm, text="Опоздал", width=14, command=mark_late).grid(row=0,column=2,padx=6)
+
+    status_labels = {}  # To update status display
+
+    for student_id, username, current_status in rows:
+        student_frame = ttk.Frame(scrollable_frame, relief="ridge", borderwidth=1)
+        student_frame.pack(fill="x", padx=10, pady=5)
+
+        name_label = tk.Label(student_frame, text=username, font=("Segoe UI", 12), width=30, anchor="w")
+        name_label.pack(side="left", padx=10)
+
+        status_label = tk.Label(student_frame, text=current_status or "Не отмечен", font=("Segoe UI", 12, "italic"), fg="gray")
+        status_label.pack(side="left", padx=10)
+        status_labels[student_id] = status_label
+
+        def create_button(text, status, student_id=student_id):
+            def on_click():
+                upsert_attendance(schedule_id, student_id, status)
+                status_labels[student_id].config(text=text, fg="black")
+
+            btn = tk.Button(student_frame, text=text, fg="black", width=12, command=on_click)
+            btn.pack(side="left", padx=5)
+
+        create_button("Присутствует", "Присутствует")
+        create_button("Опоздал", "Опоздал")
+        create_button("Отсутствует", "Отсутствует")
 
 def upsert_attendance(schedule_id, user_id, status):
     exists = db_query("SELECT 1 FROM ATTENDANCE WHERE schedule_id=? AND user_id=?", (schedule_id, user_id))

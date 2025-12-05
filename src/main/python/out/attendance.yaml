@@ -1,29 +1,28 @@
 - attendance_id: 1
   student: student1
-  group: 25-ИВТ-2-2
+  group: 25-ИВТ-2-1
   date: '2025-11-20'
   time: '10:00'
   subject: Математика
-  status: present
+  status: присутствует
 - attendance_id: 2
   student: student2
-  group: 25-ИВТ-2-2
+  group: 25-ИВТ-2-1
   date: '2025-11-20'
   time: '10:00'
   subject: Математика
-  status: absent
+  status: отсутствует
 - attendance_id: 3
   student: student1
-  group: 25-ИВТ-2-2
+  group: 25-ИВТ-2-1
   date: '2025-11-21'
   time: '12:00'
   subject: Информатика
-  status: present
+  status: присутствует
 - attendance_id: 4
   student: student2
-  group: 25-ИВТ-2-2
+  group: 25-ИВТ-2-1
   date: '2025-11-21'
   time: '12:00'
   subject: Информатика
-  status: present
-
+  status: присутствует
