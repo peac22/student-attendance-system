@@ -7,22 +7,18 @@ from datetime import datetime
 DB_PATH = "src/attendance.db"
 current_user = None  # dict {id, username, role}
 
-# Установка режима WAL для лучшей обработки блокировок (выполняется один раз)
-if os.path.exists(DB_PATH):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("PRAGMA journal_mode=WAL;")
-
 # -------------------------
 # DB helper
 # -------------------------
 def db_query(query, params=(), fetch=True):
-    with sqlite3.connect(DB_PATH, timeout=10) as conn:
-        conn.execute("PRAGMA foreign_keys = ON")
-        cur = conn.cursor()
-        cur.execute(query, params)
-        rows = cur.fetchall() if fetch else None
-        conn.commit()
-        return rows
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    cur = conn.cursor()
+    cur.execute(query, params)
+    rows = cur.fetchall() if fetch else None
+    conn.commit()
+    conn.close()
+    return rows
 
 if not os.path.exists(DB_PATH):
     messagebox.showerror("Ошибка", f"База данных не найдена!\nОжидается файл:\n{DB_PATH}")
@@ -221,42 +217,40 @@ def admin_manage_group_students(parent):
             except IndexError:
                 messagebox.showerror("Ошибка","Выберите группу и студента")
             except sqlite3.IntegrityError:
-                messagebox.showerror("Ошибка","Студент уже в этой группе")
-        tk.Button(dlg, text="Добавить", command=save).pack(pady=10)
+                messagebox.showerror("Ошибка","Студент уже в группе")
+        tk.Button(dlg, text="Добавить", command=save).pack(pady=12)
     def delete():
         sel = tree.focus()
         if not sel: messagebox.showerror("Ошибка","Выберите запись"); return
-        gid, _, sid, _ = tree.item(sel,"values")
+        gid, _, sid, _ = tree.item(sel, "values")
         if messagebox.askyesno("Подтвердить","Удалить студента из группы?"):
             db_query("DELETE FROM GROUP_STUDENTS WHERE user_id=? AND group_id=?", (sid, gid), fetch=False)
             refresh()
-    btns = tk.Frame(win); btns.pack(pady=6)
-    tk.Button(btns, text="Добавить", command=add).pack(side="left", padx=6)
-    tk.Button(btns, text="Удалить", command=delete).pack(side="left", padx=6)
+    frame = tk.Frame(win); frame.pack(pady=6)
+    tk.Button(frame, text="Добавить", command=add).pack(side="left", padx=6)
+    tk.Button(frame, text="Удалить", command=delete).pack(side="left", padx=6)
 
 # -- Subjects management
 def admin_manage_subjects(parent):
-    win = tk.Toplevel(parent); win.title("Предметы"); win.geometry("600x400")
+    win = tk.Toplevel(parent); win.title("Предметы"); win.geometry("500x400")
     tree = ttk.Treeview(win, columns=("id","name"), show="headings")
-    tree.heading("id", text="ID"); tree.heading("name", text="Название"); tree.column("name", width=400)
+    tree.heading("id", text="ID"); tree.heading("name", text="Название"); tree.column("name", width=320)
     tree.pack(fill="both", expand=True, padx=8, pady=8)
     def refresh():
         for i in tree.get_children(): tree.delete(i)
-        for r in db_query("SELECT subject_id, subject_name FROM SUBJECT ORDER BY subject_id"):
+        for r in db_query('SELECT subject_id, subject_name FROM SUBJECT ORDER BY subject_id'):
             tree.insert("", "end", values=r)
     refresh()
     def create():
         name = simpledialog.askstring("Новый предмет","Название предмета:", parent=win)
         if not name: return
-        db_query("INSERT INTO SUBJECT (subject_name) VALUES (?)", (name,), fetch=False); refresh()
+        db_query('INSERT INTO SUBJECT (subject_name) VALUES (?)', (name,), fetch=False); refresh()
     def delete():
         sel = tree.focus()
         if not sel: messagebox.showerror("Ошибка","Выберите предмет"); return
         sid = tree.item(sel,"values")[0]
-        if messagebox.askyesno("Подтвердить","Удалить предмет? (все расписание и посещения будут удалены)"):
-            db_query("DELETE FROM SCHEDULE WHERE subject_id=?", (sid,), fetch=False)
-            db_query("DELETE FROM ATTENDANCE WHERE schedule_id IN (SELECT schedule_id FROM SCHEDULE WHERE subject_id=?)", (sid,), fetch=False)
-            db_query("DELETE FROM SUBJECT WHERE subject_id=?", (sid,), fetch=False)
+        if messagebox.askyesno("Подтвердить","Удалить предмет?"):
+            db_query('DELETE FROM SUBJECT WHERE subject_id=?', (sid,), fetch=False)
             refresh()
     frame = tk.Frame(win); frame.pack(pady=6)
     tk.Button(frame, text="Создать", command=create).pack(side="left", padx=6)
@@ -264,245 +258,266 @@ def admin_manage_subjects(parent):
 
 # -- Schedule management
 def admin_manage_schedule(parent):
-    win = tk.Toplevel(parent); win.title("Расписание"); win.geometry("1000x500")
-    cols = ("id","date","time","subject","teacher","group")
+    win = tk.Toplevel(parent); win.title("Расписание"); win.geometry("1000x600")
+
+    cols = ("id","date","time","subject","teacher","group","room")
     tree = ttk.Treeview(win, columns=cols, show="headings")
-    for c,h,w in zip(cols, ["ID","Дата","Время","Предмет","Преподаватель","Группа"], [60,120,120,200,200,200]):
+    headers = ["ID","Дата","Время","Предмет","Преподаватель","Группа","Аудитория"]
+    widths = [60,110,110,220,180,140,120]
+    for c,h,w in zip(cols, headers, widths):
         tree.heading(c, text=h); tree.column(c, width=w)
     tree.pack(fill="both", expand=True, padx=8, pady=8)
+
     def refresh():
         for i in tree.get_children(): tree.delete(i)
         rows = db_query("""
-            SELECT s.schedule_id, s.date, s.time, sub.subject_name, u.username, g.group_name
+            SELECT s.schedule_id, s.date, s.time, sub.subject_name, u.username, g.group_name, s.room
             FROM SCHEDULE s
             JOIN SUBJECT sub ON s.subject_id = sub.subject_id
             JOIN USERS u ON s.teacher_id = u.user_id
             JOIN "GROUP" g ON s.group_id = g.group_id
-            ORDER BY s.date DESC, s.time DESC
+            ORDER BY s.date, s.time
         """)
         for r in rows: tree.insert("", "end", values=r)
     refresh()
-    def add():
-        dlg = tk.Toplevel(win); dlg.title("Добавить занятие"); dlg.geometry("400x360")
-        tk.Label(dlg, text="Дата (YYYY-MM-DD):").pack(anchor="w", padx=12)
-        e_date = tk.Entry(dlg, width=35); e_date.pack(padx=12, pady=6)
-        tk.Label(dlg, text="Время (HH:MM):").pack(anchor="w", padx=12)
-        e_time = tk.Entry(dlg, width=35); e_time.pack(padx=12, pady=6)
-        tk.Label(dlg, text="Предмет:").pack(anchor="w", padx=12)
-        subjects = [row[1] for row in db_query("SELECT subject_id, subject_name FROM SUBJECT")]
-        cb_sub = ttk.Combobox(dlg, values=subjects, width=35); cb_sub.pack(padx=12, pady=6)
-        tk.Label(dlg, text="Преподаватель:").pack(anchor="w", padx=12)
-        teachers = [row[1] for row in db_query("SELECT user_id, username FROM USERS WHERE role='teacher'")]
-        cb_teacher = ttk.Combobox(dlg, values=teachers, width=35); cb_teacher.pack(padx=12, pady=6)
+
+    def create():
+        dlg = tk.Toplevel(win); dlg.title("Добавить занятие"); dlg.geometry("420x420")
         tk.Label(dlg, text="Группа:").pack(anchor="w", padx=12)
         groups = [row[1] for row in db_query('SELECT group_id, group_name FROM "GROUP"')]
         cb_group = ttk.Combobox(dlg, values=groups, width=35); cb_group.pack(padx=12, pady=6)
+        tk.Label(dlg, text="Преподаватель:").pack(anchor="w", padx=12)
+        teachers = [row[1] for row in db_query("SELECT user_id, username FROM USERS WHERE role='teacher'")]
+        cb_teacher = ttk.Combobox(dlg, values=teachers, width=35); cb_teacher.pack(padx=12, pady=6)
+        tk.Label(dlg, text="Предмет:").pack(anchor="w", padx=12)
+        subjects = [row[1] for row in db_query("SELECT subject_id, subject_name FROM SUBJECT")]
+        cb_subject = ttk.Combobox(dlg, values=subjects, width=35); cb_subject.pack(padx=12, pady=6)
+        tk.Label(dlg, text="Дата (YYYY-MM-DD):").pack(anchor="w", padx=12); e_date = tk.Entry(dlg, width=36); e_date.pack(padx=12, pady=6)
+        tk.Label(dlg, text="Время (HH:MM):").pack(anchor="w", padx=12); e_time = tk.Entry(dlg, width=36); e_time.pack(padx=12, pady=6)
+        tk.Label(dlg, text="Аудитория:").pack(anchor="w", padx=12); e_room = tk.Entry(dlg, width=36); e_room.pack(padx=12, pady=6)
         def save():
             try:
-                date = e_date.get().strip(); time = e_time.get().strip()
-                sub_id = db_query("SELECT subject_id FROM SUBJECT WHERE subject_name=?", (cb_sub.get(),))[0][0]
-                teacher_id = db_query("SELECT user_id FROM USERS WHERE username=?", (cb_teacher.get(),))[0][0]
-                group_id = db_query('SELECT group_id FROM "GROUP" WHERE group_name=?', (cb_group.get(),))[0][0]
-                db_query("INSERT INTO SCHEDULE (date, time, subject_id, teacher_id, group_id) VALUES (?,?,?,?,?)",
-                         (date, time, sub_id, teacher_id, group_id), fetch=False)
-                messagebox.showinfo("OK","Занятие добавлено"); dlg.destroy(); refresh()
-            except IndexError:
-                messagebox.showerror("Ошибка","Заполните все поля правильно")
-            except sqlite3.Error as e:
-                messagebox.showerror("Ошибка", str(e))
-        tk.Button(dlg, text="Добавить", command=save).pack(pady=10)
+                gid = db_query('SELECT group_id FROM "GROUP" WHERE group_name=?', (cb_group.get(),))[0][0]
+                tid = db_query('SELECT user_id FROM USERS WHERE username=?', (cb_teacher.get(),))[0][0]
+                sid = db_query('SELECT subject_id FROM SUBJECT WHERE subject_name=?', (cb_subject.get(),))[0][0]
+            except Exception:
+                messagebox.showerror("Ошибка","Выберите корректные группу/преподавателя/предмет"); return
+            db_query("""INSERT INTO SCHEDULE (subject_id, teacher_id, group_id, date, time, room)
+                        VALUES (?, ?, ?, ?, ?, ?)""",
+                     (sid, tid, gid, e_date.get().strip(), e_time.get().strip(), e_room.get().strip()), fetch=False)
+            messagebox.showinfo("ОК","Занятие добавлено"); dlg.destroy(); refresh()
+        tk.Button(dlg, text="Сохранить", command=save).pack(pady=12)
     def delete():
         sel = tree.focus()
         if not sel: messagebox.showerror("Ошибка","Выберите занятие"); return
         sid = tree.item(sel,"values")[0]
-        if messagebox.askyesno("Подтвердить","Удалить занятие? (посещения будут удалены)"):
-            db_query("DELETE FROM ATTENDANCE WHERE schedule_id=?", (sid,), fetch=False)
-            db_query("DELETE FROM SCHEDULE WHERE schedule_id=?", (sid,), fetch=False)
-            refresh()
-    btns = tk.Frame(win); btns.pack(pady=6)
-    tk.Button(btns, text="Добавить", command=add).pack(side="left", padx=6)
-    tk.Button(btns, text="Удалить", command=delete).pack(side="left", padx=6)
+        if messagebox.askyesno("Подтвердить","Удалить занятие?"):
+            db_query("DELETE FROM SCHEDULE WHERE schedule_id=?", (sid,), fetch=False); refresh()
+    def on_double(e):
+        sel = tree.focus()
+        if not sel: return
+        schedule_id = tree.item(sel, "values")[0]
+        open_attendance_mark_window(win, schedule_id)
+    tree.bind("<Double-1>", on_double)
+    frame = tk.Frame(win); frame.pack(pady=6)
+    tk.Button(frame, text="Создать", command=create).pack(side="left", padx=6)
+    tk.Button(frame, text="Удалить", command=delete).pack(side="left", padx=6)
 
 # -------------------------
 # Teacher UI
 # -------------------------
 def open_teacher_panel(root):
     win = tk.Toplevel(root)
-    win.title("Панель преподавателя")
-    win.geometry("800x500")
-
+    win.title("Преподаватель")
+    win.geometry("900x600")
     tk.Label(win, text=f"Преподаватель: {current_user['username']}", font=("Segoe UI", 16, "bold")).pack(pady=10)
-
-    frame = tk.Frame(win); frame.pack(fill="x", padx=12, pady=6)
-    tk.Button(frame, text="Расписание", width=18, command=lambda: teacher_schedule(win)).pack(side="left", padx=6)
-    tk.Button(frame, text="Отметить посещаемость", width=18, command=lambda: teacher_mark_attendance(win)).pack(side="left", padx=6)
-    tk.Button(frame, text="Отчёт по посещениям", width=18, command=lambda: teacher_all_attendance(win)).pack(side="left", padx=6)
+    frame = tk.Frame(win); frame.pack(pady=6)
+    tk.Button(frame, text="Моё расписание", width=20, command=lambda: teacher_schedule(win)).pack(side="left", padx=8)
+    tk.Button(frame, text="Отчёт — все посещения", width=20, command=lambda: teacher_all_attendance(win)).pack(side="left", padx=8)
 
 def teacher_schedule(parent):
-    win = tk.Toplevel(parent); win.title("Моё расписание"); win.geometry("900x500")
-    cols = ("id","date","time","subject","group")
+    win = tk.Toplevel(parent); win.title("Моё расписание"); win.geometry("1000x600")
+    cols = ("id","date","time","subject","group","room")
     tree = ttk.Treeview(win, columns=cols, show="headings")
-    for c,h,w in zip(cols, ["ID","Дата","Время","Предмет","Группа"], [60,120,120,250,250]):
+    for c,h,w in zip(cols, ["ID","Дата","Время","Предмет","Группа","Аудитория"], [60,120,120,300,180,120]):
         tree.heading(c, text=h); tree.column(c, width=w)
     tree.pack(fill="both", expand=True, padx=8, pady=8)
-    def refresh():
-        for i in tree.get_children(): tree.delete(i)
-        rows = db_query("""
-            SELECT s.schedule_id, s.date, s.time, sub.subject_name, g.group_name
-            FROM SCHEDULE s
-            JOIN SUBJECT sub ON s.subject_id = sub.subject_id
-            JOIN "GROUP" g ON s.group_id = g.group_id
-            WHERE s.teacher_id = ?
-            ORDER BY s.date DESC, s.time DESC
-        """, (current_user['id'],))
-        for r in rows: tree.insert("", "end", values=r)
-    refresh()
-
-def teacher_mark_attendance(parent):
-    win = tk.Toplevel(parent); win.title("Отметить посещаемость"); win.geometry("900x500")
-    cols = ("id","date","time","subject","group")
-    tree = ttk.Treeview(win, columns=cols, show="headings")
-    for c,h,w in zip(cols, ["ID","Дата","Время","Предмет","Группа"], [60,120,120,250,250]):
-        tree.heading(c, text=h); tree.column(c, width=w)
-    tree.pack(fill="both", expand=True, padx=8, pady=8)
-    def refresh():
-        for i in tree.get_children(): tree.delete(i)
-        rows = db_query("""
-            SELECT s.schedule_id, s.date, s.time, sub.subject_name, g.group_name
-            FROM SCHEDULE s
-            JOIN SUBJECT sub ON s.subject_id = sub.subject_id
-            JOIN "GROUP" g ON s.group_id = g.group_id
-            WHERE s.teacher_id = ?
-            ORDER BY s.date DESC, s.time DESC
-        """, (current_user['id'],))
-        for r in rows: tree.insert("", "end", values=r)
-    refresh()
-    def mark():
+    rows = db_query("""
+        SELECT s.schedule_id, s.date, s.time, sub.subject_name, g.group_name, s.room
+        FROM SCHEDULE s
+        JOIN SUBJECT sub ON s.subject_id = sub.subject_id
+        JOIN "GROUP" g ON s.group_id = g.group_id
+        WHERE s.teacher_id = ?
+        ORDER BY s.date, s.time
+    """, (current_user["id"],))
+    for r in rows: tree.insert("", "end", values=r)
+    def on_double(e):
         sel = tree.focus()
-        if not sel: messagebox.showerror("Ошибка","Выберите занятие"); return
-        schedule_id, date, time, sub, group = tree.item(sel,"values")
-        dlg = tk.Toplevel(win); dlg.title(f"Посещаемость: {sub} ({date} {time})"); dlg.geometry("500x500")
-        students = db_query("""
-            SELECT u.user_id, u.username
-            FROM GROUP_STUDENTS gs
-            JOIN USERS u ON gs.user_id = u.user_id
-            WHERE gs.group_id = (SELECT group_id FROM SCHEDULE WHERE schedule_id = ?)
-            ORDER BY u.username
-        """, (schedule_id,))
-        attendance = {row[0]: row[1] for row in db_query("SELECT student_id, status FROM ATTENDANCE WHERE schedule_id=?", (schedule_id,))}
-        tree_dlg = ttk.Treeview(dlg, columns=("id","name","status"), show="headings")
-        tree_dlg.heading("id", text="ID"); tree_dlg.heading("name", text="Студент"); tree_dlg.heading("status", text="Статус")
-        tree_dlg.column("id", width=60); tree_dlg.column("name", width=250); tree_dlg.column("status", width=100)
-        tree_dlg.pack(fill="both", expand=True, padx=8, pady=8)
-        for sid, name in students:
-            status = attendance.get(sid, "отсутствует")
-            tree_dlg.insert("", "end", values=(sid, name, status))
-        def toggle_status(event):
-            item = tree_dlg.focus()
-            if not item: return
-            values = tree_dlg.item(item, "values")
-            new_status = "присутствовал" if values[2] == "отсутствовал" else "отсутствовал"
-            tree_dlg.item(item, values=(values[0], values[1], new_status))
-        tree_dlg.bind("<Double-1>", toggle_status)
-        def save():
-            for item in tree_dlg.get_children():
-                sid, _, status = tree_dlg.item(item, "values")
-                db_query("DELETE FROM ATTENDANCE WHERE schedule_id=? AND student_id=?", (schedule_id, sid), fetch=False)
-                db_query("INSERT INTO ATTENDANCE (schedule_id, student_id, status, timestamp) VALUES (?,?,?,?)",
-                         (schedule_id, sid, status, datetime.now().isoformat()), fetch=False)
-            messagebox.showinfo("OK","Посещаемость сохранена"); dlg.destroy()
-        tk.Button(dlg, text="Сохранить", command=save).pack(pady=10)
-    tk.Button(win, text="Отметить", command=mark).pack(pady=6)
+        if not sel: return
+        schedule_id = tree.item(sel, "values")[0]
+        open_attendance_mark_window(parent, schedule_id)
+    tree.bind("<Double-1>", on_double)
 
 def teacher_all_attendance(parent):
-    win = tk.Toplevel(parent); win.title("Отчёт по посещениям"); win.geometry("1100x600")
-    cols = ("schedule_id","date","time","subject","group","student","status","timestamp")
+    win = tk.Toplevel(parent); win.title("Все посещения"); win.geometry("1000x600")
+    cols = ("id","student","group","date","time","subject","status")
     tree = ttk.Treeview(win, columns=cols, show="headings")
-    for c,h,w in zip(cols, ["Sch ID","Дата","Время","Предмет","Группа","Студент","Статус","Время отметки"], [60,100,80,200,150,150,120,200]):
+    headers = ["ID","Студент","Группа","Дата","Время","Предмет","Статус"]
+    widths = [60,220,160,110,90,220,100]
+    for c,h,w in zip(cols, headers, widths):
         tree.heading(c, text=h); tree.column(c, width=w)
     tree.pack(fill="both", expand=True, padx=8, pady=8)
-    def refresh():
-        for i in tree.get_children(): tree.delete(i)
-        rows = db_query("""
-            SELECT s.schedule_id, s.date, s.time, sub.subject_name, g.group_name, u.username, a.status, a.timestamp
-            FROM ATTENDANCE a
-            JOIN SCHEDULE s ON a.schedule_id = s.schedule_id
-            JOIN SUBJECT sub ON s.subject_id = sub.subject_id
-            JOIN "GROUP" g ON s.group_id = g.group_id
-            JOIN USERS u ON a.student_id = u.user_id
-            ORDER BY s.date DESC, s.time DESC, u.username
-        """)
-        for r in rows: tree.insert("", "end", values=r)
-    refresh()
+    rows = db_query("""
+        SELECT a.attendance_id, u.username, g.group_name, s.date, s.time, sub.subject_name, a.status
+        FROM ATTENDANCE a
+        JOIN USERS u ON a.user_id = u.user_id
+        JOIN SCHEDULE s ON a.schedule_id = s.schedule_id
+        JOIN SUBJECT sub ON s.subject_id = sub.subject_id
+        JOIN "GROUP" g ON s.group_id = g.group_id
+        ORDER BY s.date DESC
+    """)
+    for r in rows: tree.insert("", "end", values=r)
+
+# -------------------------
+# Attendance marking (teacher/admin)
+# -------------------------
+def open_attendance_mark_window(parent, schedule_id):
+    win = tk.Toplevel(parent)
+    win.title(f"Отметка посещаемости — занятие #{schedule_id}")
+    win.geometry("800x600")
+    tk.Label(win, text=f"Занятие #{schedule_id}", font=("Segoe UI", 14, "bold")).pack(pady=10)
+
+    # Canvas for scrolling if many students
+    canvas = tk.Canvas(win)
+    scrollbar = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
+    scrollable_frame = ttk.Frame(canvas)
+
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(
+            scrollregion=canvas.bbox("all")
+        )
+    )
+
+    canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    # Fetch students and their current status
+    rows = db_query("""
+        SELECT u.user_id, u.username, a.status
+        FROM GROUP_STUDENTS gs
+        JOIN USERS u ON gs.user_id = u.user_id
+        JOIN SCHEDULE s ON s.group_id = gs.group_id
+        LEFT JOIN ATTENDANCE a ON a.schedule_id = s.schedule_id AND a.user_id = u.user_id
+        WHERE s.schedule_id = ?
+        ORDER BY u.username
+    """, (schedule_id,))
+
+    status_labels = {}  # To update status display
+
+    for student_id, username, current_status in rows:
+        student_frame = ttk.Frame(scrollable_frame, relief="ridge", borderwidth=1)
+        student_frame.pack(fill="x", padx=10, pady=5)
+
+        name_label = tk.Label(student_frame, text=username, font=("Segoe UI", 12), width=30, anchor="w")
+        name_label.pack(side="left", padx=10)
+
+        status_label = tk.Label(student_frame, text=current_status or "Не отмечен", font=("Segoe UI", 12, "italic"), fg="gray")
+        status_label.pack(side="left", padx=10)
+        status_labels[student_id] = status_label
+
+        def create_button(text, status, student_id=student_id):
+            def on_click():
+                upsert_attendance(schedule_id, student_id, status)
+                status_labels[student_id].config(text=text, fg="black")
+
+            btn = tk.Button(student_frame, text=text, fg="black", width=12, command=on_click)
+            btn.pack(side="left", padx=5)
+
+        create_button("Присутствует", "Присутствует")
+        create_button("Опоздал", "Опоздал")
+        create_button("Отсутствует", "Отсутствует")
+
+def upsert_attendance(schedule_id, user_id, status):
+    exists = db_query("SELECT 1 FROM ATTENDANCE WHERE schedule_id=? AND user_id=?", (schedule_id, user_id))
+    if exists:
+        db_query("UPDATE ATTENDANCE SET status=? WHERE schedule_id=? AND user_id=?", (status, schedule_id, user_id), fetch=False)
+    else:
+        db_query("INSERT INTO ATTENDANCE (schedule_id, user_id, status) VALUES (?, ?, ?)", (schedule_id, user_id, status), fetch=False)
 
 # -------------------------
 # Student UI
 # -------------------------
 def open_student_panel(root):
     win = tk.Toplevel(root)
-    win.title("Панель студента")
-    win.geometry("800x500")
-
-    tk.Label(win, text=f"Студент: {current_user['username']}", font=("Segoe UI", 16, "bold")).pack(pady=10)
-
-    frame = tk.Frame(win); frame.pack(fill="x", padx=12, pady=6)
+    win.title("Студент")
+    win.geometry("900x600")
+    tk.Label(win, text=f"Студент: {current_user['username']}", font=("Segoe UI", 16, "bold")).pack(pady=8)
+    frame = tk.Frame(win); frame.pack(pady=6)
     tk.Button(frame, text="Моё расписание", width=18, command=lambda: student_schedule(win)).pack(side="left", padx=6)
-    tk.Button(frame, text="Мои посещения", width=18, command=lambda: student_attendance(win)).pack(side="left", padx=6)
+    tk.Button(frame, text="Моя посещаемость", width=18, command=lambda: student_attendance(win)).pack(side="left", padx=6)
 
 def student_schedule(parent):
+    # find group
+    row = db_query("""
+        SELECT g.group_id, g.group_name
+        FROM GROUP_STUDENTS gs
+        JOIN "GROUP" g ON gs.group_id=g.group_id
+        WHERE gs.user_id=?
+    """, (current_user["id"],))
+    if not row:
+        messagebox.showerror("Ошибка","Вы не прикреплены к группе")
+        return
+    gid, gname = row[0]
     win = tk.Toplevel(parent); win.title("Моё расписание"); win.geometry("900x500")
-    cols = ("id","date","time","subject","teacher","group")
+    tk.Label(win, text=f"Группа: {gname}", font=("Segoe UI", 14, "bold")).pack(pady=6)
+    cols = ("date","time","subject","teacher","room")
     tree = ttk.Treeview(win, columns=cols, show="headings")
-    for c,h,w in zip(cols, ["ID","Дата","Время","Предмет","Преподаватель","Группа"], [60,120,120,200,200,200]):
+    for c,h,w in zip(cols, ["Дата","Время","Предмет","Преподаватель","Аудитория"], [130,110,260,220,120]):
         tree.heading(c, text=h); tree.column(c, width=w)
     tree.pack(fill="both", expand=True, padx=8, pady=8)
-    def refresh():
-        for i in tree.get_children(): tree.delete(i)
-        rows = db_query("""
-            SELECT s.schedule_id, s.date, s.time, sub.subject_name, u.username, g.group_name
-            FROM SCHEDULE s
-            JOIN SUBJECT sub ON s.subject_id = sub.subject_id
-            JOIN USERS u ON s.teacher_id = u.user_id
-            JOIN "GROUP" g ON s.group_id = g.group_id
-            JOIN GROUP_STUDENTS gs ON g.group_id = gs.group_id
-            WHERE gs.user_id = ?
-            ORDER BY s.date DESC, s.time DESC
-        """, (current_user['id'],))
-        for r in rows: tree.insert("", "end", values=r)
-    refresh()
+    rows = db_query("""
+        SELECT s.date, s.time, sub.subject_name, u.username, s.room
+        FROM SCHEDULE s
+        JOIN SUBJECT sub ON s.subject_id=sub.subject_id
+        JOIN USERS u ON s.teacher_id=u.user_id
+        WHERE s.group_id=?
+        ORDER BY s.date, s.time
+    """, (gid,))
+    for r in rows: tree.insert("", "end", values=r)
 
 def student_attendance(parent):
-    win = tk.Toplevel(parent); win.title("Мои посещения"); win.geometry("1000x500")
-    cols = ("schedule_id","date","time","subject","teacher","group","status","timestamp")
+    win = tk.Toplevel(parent); win.title("Моя посещаемость"); win.geometry("900x500")
+    cols = ("date","time","subject","status")
     tree = ttk.Treeview(win, columns=cols, show="headings")
-    for c,h,w in zip(cols, ["Sch ID","Дата","Время","Предмет","Преподаватель","Группа","Статус","Время отметки"], [60,100,80,200,150,150,120,200]):
+    for c,h,w in zip(cols, ["Дата","Время","Предмет","Статус"], [150,110,380,120]):
         tree.heading(c, text=h); tree.column(c, width=w)
     tree.pack(fill="both", expand=True, padx=8, pady=8)
-    def refresh():
-        for i in tree.get_children(): tree.delete(i)
-        rows = db_query("""
-            SELECT s.schedule_id, s.date, s.time, sub.subject_name, u.username, g.group_name, a.status, a.timestamp
-            FROM ATTENDANCE a
-            JOIN SCHEDULE s ON a.schedule_id = s.schedule_id
-            JOIN SUBJECT sub ON s.subject_id = sub.subject_id
-            JOIN USERS u ON s.teacher_id = u.user_id
-            JOIN "GROUP" g ON s.group_id = g.group_id
-            WHERE a.student_id = ?
-            ORDER BY s.date DESC, s.time DESC
-        """, (current_user['id'],))
-        for r in rows: tree.insert("", "end", values=r)
-    refresh()
+    rows = db_query("""
+        SELECT s.date, s.time, sub.subject_name, a.status
+        FROM ATTENDANCE a
+        JOIN SCHEDULE s ON a.schedule_id=s.schedule_id
+        JOIN SUBJECT sub ON s.subject_id=sub.subject_id
+        WHERE a.user_id=?
+        ORDER BY s.date
+    """, (current_user["id"],))
+    for r in rows: tree.insert("", "end", values=r)
 
 # -------------------------
 # Main window
 # -------------------------
-root = tk.Tk()
-root.title("Система учета посещаемости студентов")
-root.geometry("500x300")
+def main_window():
+    root = tk.Tk()
+    root.title("Система учёта посещаемости")
+    root.geometry("520x420")
+    tk.Label(root, text="СИСТЕМА УЧЁТА ПОСЕЩАЕМОСТИ", font=("Segoe UI", 18, "bold")).pack(pady=24)
+    tk.Button(root, text="СТУДЕНТ", width=30, height=2, command=lambda: login_window(root,"student")).pack(pady=8)
+    tk.Button(root, text="ПРЕПОДАВАТЕЛЬ", width=30, height=2, command=lambda: login_window(root,"teacher")).pack(pady=8)
+    tk.Button(root, text="АДМИНИСТРАТОР", width=30, height=2, command=lambda: login_window(root,"admin")).pack(pady=8)
+    root.mainloop()
 
-tk.Label(root, text="Добро пожаловать!", font=("Segoe UI", 16, "bold")).pack(pady=20)
-tk.Button(root, text="Администратор", width=30, command=lambda: login_window(root, "admin")).pack(pady=10)
-tk.Button(root, text="Преподаватель", width=30, command=lambda: login_window(root, "teacher")).pack(pady=10)
-tk.Button(root, text="Студент", width=30, command=lambda: login_window(root, "student")).pack(pady=10)
-
-root.mainloop()
+if __name__ == "__main__":
+    main_window()
