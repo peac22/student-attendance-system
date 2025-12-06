@@ -3,22 +3,61 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import os
 from datetime import datetime
+import time
 
 DB_PATH = "src/attendance.db"
 current_user = None  # dict {id, username, role}
 
 # -------------------------
-# DB helper
+# DB helper (improved)
 # -------------------------
-def db_query(query, params=(), fetch=True):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON")
-    cur = conn.cursor()
-    cur.execute(query, params)
-    rows = cur.fetchall() if fetch else None
-    conn.commit()
-    conn.close()
-    return rows
+def db_query(query, params=(), fetch=True, retries=6, base_delay=0.1):
+    """
+    Выполняет SQL-запрос к SQLite с повторными попытками при 'database is locked'.
+    - query: SQL строка
+    - params: кортеж параметров
+    - fetch: если True — вернуть cur.fetchall(), иначе None
+    - retries: количество попыток (включая первую)
+    - base_delay: базовая задержка (сек) для экспоненциального backoff
+    """
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        conn = None
+        try:
+            # Небольшой таймаут даёт SQLite время снять блокировку
+            conn = sqlite3.connect(DB_PATH, timeout=5)
+            conn.execute("PRAGMA foreign_keys = ON")
+            cur = conn.cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall() if fetch else None
+            conn.commit()
+            return rows
+        except sqlite3.OperationalError as e:
+            last_exc = e
+            # Повторяем только при блокировке базы данных
+            if "locked" in str(e).lower() and attempt < retries:
+                # закрываем соединение и ждём перед следующей попыткой
+                try:
+                    if conn:
+                        conn.close()
+                except Exception:
+                    pass
+                delay = base_delay * (2 ** (attempt - 1))  # экспоненциальный backoff
+                time.sleep(delay)
+                continue
+            else:
+                # нерешаемая ошибка или исчерпаны попытки — пробрасываем
+                raise
+        finally:
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
+    # если цикл завершился без return — бросаем последнее исключение
+    if last_exc:
+        raise last_exc
+    return None
 
 if not os.path.exists(DB_PATH):
     messagebox.showerror("Ошибка", f"База данных не найдена!\nОжидается файл:\n{DB_PATH}")
